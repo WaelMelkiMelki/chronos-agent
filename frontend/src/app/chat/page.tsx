@@ -17,14 +17,15 @@ export default function ChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { if (!auth.isAuthed()) router.push("/login"); }, [router]);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth"); }, [messages]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   async function connectGoogle() {
     try { const { auth_url } = await api.googleLoginUrl(); window.location.href = auth_url; } catch (e) { alert("Erreur: " + (e as Error).message); }
   }
 
   async function streamResponse(path: string, body: unknown) {
-    const res = await fetch(`${API_URL_BASE}${path}`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.access()}` }, body: JSON.stringify(body) });
+    const token = auth.access();
+    const res = await fetch(`${API_URL_BASE}${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) }, body: JSON.stringify(body) });
     if (!res.body) return;
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -44,10 +45,13 @@ export default function ChatPage() {
     }
   }
 
-  function handleEvent(ev: any) {
-    if (ev.type === "thread") setThreadId(ev.thread_id);
+  function handleEvent(ev: { type?: string; thread_id?: string; response?: string; planned_actions?: PendingAction[]; status?: string }) {
+    if (ev.type === "thread" && ev.thread_id) setThreadId(ev.thread_id);
     if (ev.type === "final") {
-      if (ev.response) setMessages((m) => [...m, { role: "assistant", content: ev.response }]);
+      if (typeof ev.response === "string") {
+        const response = ev.response;
+        setMessages((m) => [...m, { role: "assistant", content: response }]);
+      }
       if (ev.planned_actions && ev.planned_actions.length > 0 && ev.status === "awaiting_confirmation") { setPending(ev.planned_actions); } else { setPending(null); }
     }
   }

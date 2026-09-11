@@ -34,7 +34,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
   const token = auth.access();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (token) headers.set("Authorization", "Bearer " + token);
   const res = await fetch(`${API_URL}${path}`, { ...init, headers });
   if (!res.ok) {
     const body = await res.text();
