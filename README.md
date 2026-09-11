@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # chronos-agent
 
 > Local-first, multi-user AI agent that manages your calendar
@@ -41,3 +42,6 @@ See [docs/architecture.md](docs/architecture.md) and [docs/adr/](docs/adr/).
 
 MIT — see [LICENSE](LICENSE).
 # chronos-agent
+=======
+# chronos-agent
+>>>>>>> a29aa6b019776140b8bb45cee5840e9500435fec
