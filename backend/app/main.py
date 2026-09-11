@@ -1,8 +1,6 @@
 """FastAPI entrypoint."""
 
-
 from __future__ import annotations
-
 
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
@@ -13,20 +11,27 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
-from app.services.agent_service import AgentService
+from app.services.agent_service import get_agent_service
 
 setup_logging()
 logger = get_logger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     logger.info("Starting %s in %s mode", settings.app_name, settings.app_env)
 
-    await AgentService.initialize()
-    app.state.graph = AgentService.get_graph()
+    agent = get_agent_service()
+    try:
+        await agent.start()
+        logger.info("LangGraph agent + checkpointer ready")
+    except Exception as e:
+        logger.exception("Agent failed to start: %s", e)
+
     yield
+
+    await agent.stop()
     logger.info("Shutting down %s", settings.app_name)
 
 

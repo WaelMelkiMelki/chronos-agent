@@ -1,97 +1,110 @@
-"""AgentService: orchestrates the LangGraph agent and streams SSE events."""
-
+"""Wires the LangGraph agent to FastAPI, DB checkpointer, and SSE."""
 
 from __future__ import annotations
 
-
-import json
-import uuid
 from collections.abc import AsyncIterator
 from typing import Any
+from uuid import UUID, uuid4
 
-from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.types import Command
 
 from app.agent.graph import build_graph
 from app.core.config import get_settings
-from app.core.logging import get_logger
-
-logger = get_logger(__name__)
 
 
 class AgentService:
-    _graph: Any | None = None
-    _saver: Any | None = None
+    """One instance per application (kept in app.state)."""
 
-    @classmethod
-    async def initialize(cls) -> None:
-        """Create the graph. Postgres checkpointing is optional
-        and requires langgraph-checkpoint-postgres >= 2.x with
-        a working AsyncPostgresSaver implementation."""
+    def __init__(self) -> None:
+        self._graph = None
+        self._checkpointer_ctx = None
+        self._checkpointer: AsyncPostgresSaver | None = None
+
+    async def start(self) -> None:
         settings = get_settings()
-        dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-        try:
-            from langgraph.checkpoint.postgres import PostgresSaver
-            cm = PostgresSaver.from_conn_string(dsn)
-            saver = cm.__enter__()
-            saver.setup()
-            cls._saver = saver
-        except Exception as e:
-            logger.warning("PostgresSaver not available (check langgraph-checkpoint-postgres version): %s", e)
-        # Compile without checkpointer to avoid
-        # aget_tuple NotImplementedError on some versions.
-        cls._graph = build_graph()
+        dsn = settings.database_url.replace("+asyncpg", "")
+        self._checkpointer_ctx = AsyncPostgresSaver.from_conn_string(dsn)
+        self._checkpointer = await self._checkpointer_ctx.__aenter__()
+        await self._checkpointer.setup()
+        self._graph = build_graph(checkpointer=self._checkpointer)
 
-    @classmethod
-    def get_graph(cls) -> Any:
-        if cls._graph is None:
-            raise RuntimeError("AgentService not initialized. Call initialize() first.")
-        return cls._graph
+    async def stop(self) -> None:
+        if self._checkpointer_ctx is not None:
+            await self._checkpointer_ctx.__aexit__(None, None, None)
 
-    async def run(self, message: str, thread_id: str | None = None) -> AsyncIterator[dict[str, Any]]:
-        """Stream the agent graph and emit SSE-compatible events.
-
-        Uses graph.astream() for compatibility regardless of
-        checkpoint provider version. After streaming completes,
-        emits a final event with the computed state.
-        """
-        graph = self.get_graph()
-        if thread_id is None:
-            thread_id = str(uuid.uuid4())
-        config = {"configurable": {"thread_id": thread_id}}
-
-        initial_state = {
-            "messages": [HumanMessage(content=message)],
-            "user_id": "todo-user-id",
-            "timezone": "Europe/Paris",
-            "language": "fr",
-            "status": "parsing",
+    def _thread_config(self, user_id: UUID, thread_id: str) -> dict[str, Any]:
+        return {
+            "configurable": {
+                "thread_id": thread_id,
+                "user_id": str(user_id),
+            }
         }
 
-        final_values: dict[str, Any] = {}
-        async for event in graph.astream(initial_state, config=config):
-            if isinstance(event, dict):
-                node_name = list(event.keys())[0] if event else ""
-                node_values = event.get(node_name, {}) if node_name else {}
-                final_values = node_values
-                if node_name == "parse_intent":
-                    yield self._sse_event("status", {"status": "parsing"})
-                elif node_name == "plan_tools":
-                    yield self._sse_event("status", {"status": "executing"})
-                elif node_name == "human_confirm":
-                    yield self._sse_event("status", {"status": "awaiting_confirmation"})
-                elif node_name == "execute":
-                    yield self._sse_event("status", {"status": "executing"})
-                elif node_name == "respond":
-                    yield self._sse_event("status", {"status": "done"})
+    async def start_thread(self, user_id: UUID, thread_id: str | None = None) -> str:
+        return thread_id or str(uuid4())
 
-        yield self._sse_event("final", {
-            "status": final_values.get("status", "done"),
-            "intent": final_values.get("intent"),
-            "planned_actions": final_values.get("planned_actions", []),
-            "tool_results": final_values.get("tool_results", []),
-            "final_response": final_values.get("final_response"),
-        })
+    async def run(
+        self,
+        *,
+        user_id: UUID,
+        message: str,
+        thread_id: str,
+        timezone: str = "UTC",
+        language: str = "fr",
+    ) -> AsyncIterator[dict[str, Any]]:
+        assert self._graph is not None
+        config = self._thread_config(user_id, thread_id)
+        inputs = {
+            "raw_user_input": message,
+            "messages": [],
+            "user_id": str(user_id),
+            "timezone": timezone,
+            "language": language,
+        }
 
-    @staticmethod
-    def _sse_event(event_type: str, data: dict[str, Any]) -> dict[str, Any]:
-        return {"event": event_type, "data": data}
+        async for event in self._graph.astream_events(
+            inputs, config=config, version="v2"
+        ):
+            kind = event["event"]
+            if kind == "on_chain_end" and event.get("name") == "LangGraph":
+                output = event["data"].get("output", {})
+                yield {
+                    "type": "final",
+                    "status": output.get("status"),
+                    "intent": output.get("intent"),
+                    "response": output.get("final_response"),
+                    "tool_results": output.get("tool_results", []),
+                    "planned_actions": output.get("planned_actions", []),
+                }
+
+    async def resume(
+        self,
+        *,
+        user_id: UUID,
+        thread_id: str,
+        approved: bool,
+    ) -> AsyncIterator[dict[str, Any]]:
+        assert self._graph is not None
+        config = self._thread_config(user_id, thread_id)
+        async for event in self._graph.astream_events(
+            Command(resume=approved), config=config, version="v2"
+        ):
+            if event["event"] == "on_chain_end" and event.get("name") == "LangGraph":
+                output = event["data"].get("output", {})
+                yield {
+                    "type": "final",
+                    "status": output.get("status"),
+                    "response": output.get("final_response"),
+                    "tool_results": output.get("tool_results", []),
+                }
+
+
+_agent_service: AgentService | None = None
+
+
+def get_agent_service() -> AgentService:
+    global _agent_service
+    if _agent_service is None:
+        _agent_service = AgentService()
+    return _agent_service
