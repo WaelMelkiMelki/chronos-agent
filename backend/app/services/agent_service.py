@@ -13,6 +13,9 @@ from app.agent.graph import build_graph
 from app.core.config import get_settings
 
 
+_TERMINAL_STATUSES = {"done", "awaiting_confirmation", "awaiting_clarification", "error"}
+
+
 class AgentService:
     """One instance per application (kept in app.state)."""
 
@@ -44,6 +47,18 @@ class AgentService:
     async def start_thread(self, user_id: UUID, thread_id: str | None = None) -> str:
         return thread_id or str(uuid4())
 
+    def _final_payload(self, values: dict[str, Any]) -> dict[str, Any]:
+        """Build the SSE payload from a LangGraph state dict."""
+        return {
+            "type": "final",
+            "status": values.get("status"),
+            "intent": values.get("intent"),
+            "response": values.get("final_response"),
+            "clarification_question": values.get("clarification_question"),
+            "tool_results": values.get("tool_results", []),
+            "planned_actions": values.get("planned_actions", []),
+        }
+
     async def run(
         self,
         *,
@@ -53,7 +68,9 @@ class AgentService:
         timezone: str = "UTC",
         language: str = "fr",
     ) -> AsyncIterator[dict[str, Any]]:
+        """Run the graph and stream only the final terminal state as SSE."""
         assert self._graph is not None
+
         config = self._thread_config(user_id, thread_id)
         inputs = {
             "raw_user_input": message,
@@ -63,20 +80,23 @@ class AgentService:
             "language": language,
         }
 
-        async for event in self._graph.astream_events(
-            inputs, config=config, version="v2"
+        # Consume the stream; keep the latest state with a terminal status.
+        last_terminal: dict[str, Any] | None = None
+        async for values in self._graph.astream(
+            inputs, config=config, stream_mode="values"
         ):
-            kind = event["event"]
-            if kind == "on_chain_end" and event.get("name") == "LangGraph":
-                output = event["data"].get("output", {})
-                yield {
-                    "type": "final",
-                    "status": output.get("status"),
-                    "intent": output.get("intent"),
-                    "response": output.get("final_response"),
-                    "tool_results": output.get("tool_results", []),
-                    "planned_actions": output.get("planned_actions", []),
-                }
+            if values.get("status") in _TERMINAL_STATUSES:
+                last_terminal = values
+
+        # If the graph stopped on an interrupt (HITL), the checkpoint holds the pause.
+        if last_terminal is None:
+            state = await self._graph.aget_state(config)
+            if state and state.next:
+                last_terminal = dict(state.values or {})
+                last_terminal["status"] = "awaiting_confirmation"
+
+        if last_terminal is not None:
+            yield self._final_payload(last_terminal)
 
     async def resume(
         self,
@@ -87,19 +107,19 @@ class AgentService:
     ) -> AsyncIterator[dict[str, Any]]:
         assert self._graph is not None
         config = self._thread_config(user_id, thread_id)
-        async for event in self._graph.astream_events(
-            Command(resume=approved), config=config, version="v2"
+
+        last_terminal: dict[str, Any] | None = None
+        async for values in self._graph.astream(
+            Command(resume=approved), config=config, stream_mode="values"
         ):
-            if event["event"] == "on_chain_end" and event.get("name") == "LangGraph":
-                output = event["data"].get("output", {})
-                yield {
-                    "type": "final",
-                    "status": output.get("status"),
-                    "response": output.get("final_response"),
-                    "tool_results": output.get("tool_results", []),
-                }
+            if values.get("status") in _TERMINAL_STATUSES:
+                last_terminal = values
+
+        if last_terminal is not None:
+            yield self._final_payload(last_terminal)
 
 
+# ─── Singleton managed in main.py lifespan ─────────────
 _agent_service: AgentService | None = None
 
 

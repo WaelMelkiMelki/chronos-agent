@@ -1,20 +1,15 @@
-"""Node: ask the user to disambiguate when intent is unclear."""
-
+"""Node: surface a clarification question to the user."""
 
 from __future__ import annotations
-
 
 from app.agent.state import AgentState
 
 
-
-
 async def resolve_ambiguity(state: AgentState) -> AgentState:
-    """Called when parse_intent flags ambiguity.
-
-
-    In V1, we emit a clarification question + options to the UI via SSE.
-    The graph stops here (interrupt); it resumes once the user replies.
-    """
+    """Set status + final_response so the frontend displays the question."""
+    question = state.get("clarification_question") or (
+        "Peux-tu préciser ta demande ?"
+    )
     state["status"] = "awaiting_clarification"
+    state["final_response"] = question
     return state

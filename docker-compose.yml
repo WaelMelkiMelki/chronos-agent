@@ -1,6 +1,5 @@
 name: chronos-agent
 
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -20,11 +19,11 @@ services:
       timeout: 5s
       retries: 5
 
-
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: runtime
     container_name: chronos-backend
     restart: unless-stopped
     env_file:
@@ -40,11 +39,11 @@ services:
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
-
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      target: runner
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     container_name: chronos-frontend
@@ -56,7 +55,6 @@ services:
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
 
-
   ollama:
     image: ollama/ollama:latest
     container_name: chronos-ollama
@@ -67,7 +65,6 @@ services:
     ports:
       - "${OLLAMA_PORT:-11434}:11434"
 
-
   qdrant:
     image: qdrant/qdrant:latest
     container_name: chronos-qdrant
@@ -77,7 +74,6 @@ services:
       - qdrant_data:/qdrant/storage
     ports:
       - "${QDRANT_PORT:-6333}:6333"
-
 
 volumes:
   postgres_data:

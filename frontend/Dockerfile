@@ -1,8 +1,10 @@
+# ─── Deps ────────────────────────────────────────
 FROM node:20-alpine AS deps
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund --prefer-offline
 
+# ─── Builder ─────────────────────────────────────
 FROM node:20-alpine AS builder
 WORKDIR /app
 ARG NEXT_PUBLIC_API_URL
@@ -11,6 +13,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
+# ─── Runner (production) ─────────────────────────
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
@@ -26,7 +29,8 @@ CMD ["node", "server.js"]
 FROM node:20-alpine AS development
 WORKDIR /app
 ENV NODE_ENV=development
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund --prefer-offline
+COPY . .
 EXPOSE 3000
 CMD ["npm", "run", "dev"]

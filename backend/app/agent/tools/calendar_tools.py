@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Annotated
+from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
@@ -63,46 +63,84 @@ async def list_events(
     async with factory() as db:
         events = await CalendarService(db).list_events(user_id, start, end)
         return [
-            {"id": e.google_event_id, "summary": e.summary, "start": e.start_at.isoformat(), "end": e.end_at.isoformat(), "all_day": e.all_day}
+            {
+                "id": e.google_event_id,
+                "summary": e.summary,
+                "start": e.start_at.isoformat(),
+                "end": e.end_at.isoformat(),
+                "all_day": e.all_day,
+            }
             for e in events
         ]
 
 
 @tool("create_event", args_schema=CreateEventInput)
 async def create_event(
-    summary: str, start: datetime, end: datetime,
-    description: str | None = None, location: str | None = None,
-    all_day: bool = False, calendar_id: str = "primary",
+    summary: str,
+    start: datetime,
+    end: datetime,
+    description: str | None = None,
+    location: str | None = None,
+    all_day: bool = False,
+    calendar_id: str = "primary",
     config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
+    """Create a new calendar event."""
     from uuid import UUID
+
     user_id = UUID(_user_id_from_config(config or {}))
     factory = get_session_factory()
     async with factory() as db:
-        event = await CalendarService(db).create_event(user_id, summary=summary, start_at=start, end_at=end, description=description, location=location, all_day=all_day, calendar_id=calendar_id)
+        event = await CalendarService(db).create_event(
+            user_id,
+            summary=summary,
+            start_at=start,
+            end_at=end,
+            description=description,
+            location=location,
+            all_day=all_day,
+            calendar_id=calendar_id,
+        )
         await db.commit()
         return {"id": event.google_event_id, "summary": event.summary}
 
 
 @tool("update_event", args_schema=UpdateEventInput)
 async def update_event(
-    google_event_id: str, summary: str | None = None,
-    start: datetime | None = None, end: datetime | None = None,
-    description: str | None = None, location: str | None = None,
+    google_event_id: str,
+    summary: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    description: str | None = None,
+    location: str | None = None,
     config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
+    """Update an existing calendar event."""
     from uuid import UUID
+
     user_id = UUID(_user_id_from_config(config or {}))
     factory = get_session_factory()
     async with factory() as db:
-        event = await CalendarService(db).update_event(user_id, google_event_id, summary=summary, start_at=start, end_at=end, description=description, location=location)
+        event = await CalendarService(db).update_event(
+            user_id,
+            google_event_id,
+            summary=summary,
+            start_at=start,
+            end_at=end,
+            description=description,
+            location=location,
+        )
         await db.commit()
         return {"id": event.google_event_id, "summary": event.summary}
 
 
 @tool("delete_event", args_schema=DeleteEventInput)
-async def delete_event(google_event_id: str, config: RunnableConfig | None = None) -> dict[str, Any]:
+async def delete_event(
+    google_event_id: str, config: RunnableConfig | None = None
+) -> dict[str, Any]:
+    """Delete an existing calendar event."""
     from uuid import UUID
+
     user_id = UUID(_user_id_from_config(config or {}))
     factory = get_session_factory()
     async with factory() as db:
@@ -111,4 +149,9 @@ async def delete_event(google_event_id: str, config: RunnableConfig | None = Non
         return {"deleted": google_event_id}
 
 
-__all__ = ["list_events", "create_event", "update_event", "delete_event"]
+__all__ = [
+    "list_events",
+    "create_event",
+    "update_event",
+    "delete_event",
+]

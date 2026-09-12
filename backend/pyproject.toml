@@ -2,7 +2,6 @@
 name = "chronos-agent-backend"
 version = "0.1.0"
 description = "Local-first multi-user AI calendar agent"
-readme = "../README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "chronos-agent" }]
