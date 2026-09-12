@@ -47,3 +47,23 @@ EXPOSE 8000
 
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+# ─── Development ─────────────────────────────────
+FROM runtime AS development
+
+
+USER root
+
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip install --upgrade pip && \
+    pip install -e ".[dev]"
+
+
+USER app
+
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

@@ -21,3 +21,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 USER nextjs
 EXPOSE 3000
 CMD ["node", "server.js"]
+
+# ─── Development ─────────────────────────────────
+FROM node:20-alpine AS development
+WORKDIR /app
+ENV NODE_ENV=development
+COPY package.json ./
+RUN npm install
+EXPOSE 3000
+CMD ["npm", "run", "dev"]
