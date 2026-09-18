@@ -14,6 +14,11 @@ from app.llm.base import LLMProvider
 _SYSTEM = """You are the intent parser of a calendar assistant.
 Today is {now} (weekday {weekday}). The user's timezone is {tz}.
 
+CRITICAL: All datetime outputs must use the user's timezone offset,
+NOT UTC. Example: if the user's timezone is Africa/Tunis (UTC+1) and
+the user says "demain à 15h", the output must be
+"2026-09-13T15:00:00+01:00".
+
 Return STRICT JSON only (no prose, no markdown, no code fences):
 {{
   "intent": "list_events" | "create_event" | "update_event" |
@@ -37,7 +42,7 @@ DEFAULTS — apply these yourself, DO NOT ask for clarification:
 - create_event: if "summary" is missing but the user clearly names a topic,
   reuse their words as the summary.
 - find_free_slots: if "range_start"/"range_end" are missing, use today and
-  today+7 days.
+  today+7 days, at 09:00 and 18:00 in the user's timezone.
 
 Only set "ambiguous": true if a CRITICAL field is impossible to infer
 (e.g. no date at all for create_event, or the user mentions an event
